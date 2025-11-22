@@ -19,7 +19,7 @@ class RefereeAgentService:
         self.client = client
         self.model = model
 
-    def generate_level(self, topic: SparringTopic, difficulty: int) -> SparringLevel:
+    def generate_level(self, topic: SparringTopic, difficulty: int, profiler: object = None) -> SparringLevel:
         """Creates a unique level based on topic and difficulty, with guardrails."""
 
         player_hp = 100
@@ -55,11 +55,24 @@ Return ONLY a JSON object:
 """.strip()
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "system", "content": system_prompt}],
-                response_format={"type": "json_object"},
-            )
+            if profiler:
+                with profiler.profile("Referee: Generate Level") as p_entry:
+                    try:
+                        response = self.client.chat.completions.create(
+                            model=self.model,
+                            messages=[{"role": "system", "content": system_prompt}],
+                            response_format={"type": "json_object"},
+                        )
+                    except Exception as exc:
+                        p_entry.metadata["error"] = str(exc)
+                        raise exc
+            else:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "system", "content": system_prompt}],
+                    response_format={"type": "json_object"},
+                )
+
             payload = json.loads(response.choices[0].message.content)
             return SparringLevel(
                 id=f"{topic.id}_lvl_{difficulty}",
@@ -96,7 +109,7 @@ Return ONLY a JSON object:
                 avatar_path="🤖",
             )
 
-    def generate_round(self, level: SparringLevel, history: list) -> SparringRound:
+    def generate_round(self, level: SparringLevel, history: list, profiler: object = None) -> SparringRound:
         """Generates a new round with validation and deterministic fallback."""
 
         system_prompt = f"""
@@ -145,14 +158,29 @@ Return ONLY a JSON object:
         user_prompt = f"**History**:\n{history_text}\n\nGenerate the next round."
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                response_format={"type": "json_object"},
-            )
+            if profiler:
+                with profiler.profile("Referee: Generate Round") as p_entry:
+                    try:
+                        response = self.client.chat.completions.create(
+                            model=self.model,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt},
+                            ],
+                            response_format={"type": "json_object"},
+                        )
+                    except Exception as exc:
+                        p_entry.metadata["error"] = str(exc)
+                        raise exc
+            else:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                )
 
             data = json.loads(response.choices[0].message.content)
             options = [SparringOption(**opt) for opt in data.get("options", []) if self._is_valid_option(opt)]
@@ -169,7 +197,7 @@ Return ONLY a JSON object:
             print(f"Referee error: {exc}")
             return self._fallback_round(level)
 
-    def generate_round_batch(self, level: SparringLevel, count: int = 5) -> List[SparringRound]:
+    def generate_round_batch(self, level: SparringLevel, count: int = 5, profiler: object = None) -> List[SparringRound]:
         """Generate a batch of nano-scenarios to avoid per-turn latency."""
 
         system_prompt = f"""
@@ -206,11 +234,23 @@ Ensure the output is valid JSON.
 """.strip()
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "system", "content": system_prompt}],
-                response_format={"type": "json_object"},
-            )
+            if profiler:
+                with profiler.profile("Referee: Generate Batch") as p_entry:
+                    try:
+                        response = self.client.chat.completions.create(
+                            model=self.model,
+                            messages=[{"role": "system", "content": system_prompt}],
+                            response_format={"type": "json_object"},
+                        )
+                    except Exception as exc:
+                        p_entry.metadata["error"] = str(exc)
+                        raise exc
+            else:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "system", "content": system_prompt}],
+                    response_format={"type": "json_object"},
+                )
             data = json.loads(response.choices[0].message.content)
             rounds_raw = data.get("rounds", [])
             parsed: List[SparringRound] = []

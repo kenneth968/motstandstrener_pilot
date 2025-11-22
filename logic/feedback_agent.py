@@ -30,6 +30,7 @@ class FeedbackAgentService:
         context: ScenarioContext,
         history: Iterable[Dict[str, str]],
         session: SQLiteSession,
+        profiler: object = None,
     ) -> str:
         """Ask the feedback agent for 3–5 short observations."""
 
@@ -61,4 +62,5 @@ Instruksjoner for tilbakemelding:
             prompt.strip(),
             session=session,
             max_turns=4,
+            profiler=profiler,
         )

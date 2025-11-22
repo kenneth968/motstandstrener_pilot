@@ -79,6 +79,7 @@ class ScenarioAgentService:
         learning_params: LearningParams,
         user_message: str,
         session: SQLiteSession,
+        profiler: object = None,
     ) -> str:
         """
         Ask the scenario agent to respond to the user's latest message.
@@ -102,6 +103,7 @@ Brukerens siste melding:
             self._agent_name,
             prompt.strip(),
             session=session,
+            profiler=profiler,
         )
 
     def start_scenario(
@@ -109,6 +111,7 @@ Brukerens siste melding:
         context: ScenarioContext,
         learning_params: LearningParams,
         session: SQLiteSession,
+        profiler: object = None,
     ) -> str:
         """Ask the agent to open the scene with context and the first challenge."""
 

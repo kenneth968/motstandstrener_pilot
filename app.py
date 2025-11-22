@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import os
 from typing import Dict, List
 
 import streamlit as st
@@ -13,6 +14,7 @@ from core import state as session_state
 from core.state import ChatTurn, ScenarioContext, apply_scenario_details
 from core.scenarios import PREBUILT_SCENARIOS
 from core.game_state import GameState
+from core.profiler import Profiler
 from logic.feedback_agent import FeedbackAgentService
 from logic.reflection_agent import ReflectionAgentService
 from logic.scenario_agent import ScenarioAgentService
@@ -320,6 +322,7 @@ def render_scenario_step() -> None:
                 context=context,
                 learning_params=st.session_state.learning_params,
                 session=session_state.get_agent_session(st.session_state, "scenario"),
+                profiler=st.session_state.profiler,
             )
             session_state.append_chat_turn(
                 st.session_state, ChatTurn(user="", assistant=intro)
@@ -340,6 +343,7 @@ def render_scenario_step() -> None:
                 learning_params=st.session_state.learning_params,
                 user_message=user_msg,
                 session=session_state.get_agent_session(st.session_state, "scenario"),
+                profiler=st.session_state.profiler,
             )
             session_state.append_chat_turn(
                 st.session_state, ChatTurn(user=user_msg, assistant=reply)
@@ -366,6 +370,7 @@ def render_feedback_step() -> None:
                 context=context,
                 history=session_state.get_chat_history(st.session_state),
                 session=session_state.get_agent_session(st.session_state, "feedback"),
+                profiler=st.session_state.profiler,
             )
 
     st.success("Her er noen tanker om gjennomføringen:")
@@ -480,7 +485,7 @@ def render_sparring_game() -> None:
     # 0. Generate Level if missing
     if not game.level:
         with st.spinner(f"Genererer Nivå {game.level_number}: {game.topic.title}..."):
-            game.level = services["referee"].generate_level(game.topic, game.level_number)
+            game.level = services["referee"].generate_level(game.topic, game.level_number, profiler=st.session_state.profiler)
             # Reset HPs based on new level
             game.player_hp = game.level.initial_player_hp
             game.opponent_hp = game.level.initial_opponent_hp
@@ -495,7 +500,7 @@ def render_sparring_game() -> None:
     # Pre-generate 5 nano-scenarios to avoid per-turn latency
     if not game.rounds:
         with st.spinner(f"Laster 5 situasjoner for {game.topic.title}..."):
-            game.rounds = services["referee"].generate_round_batch(game.level, count=5)
+            game.rounds = services["referee"].generate_round_batch(game.level, count=5, profiler=st.session_state.profiler)
             game.round_index = 0
             game.current_round = game.rounds[0] if game.rounds else None
         st.rerun()
@@ -611,7 +616,14 @@ def check_login() -> bool:
         code = st.text_input("Kode", type="password", label_visibility="collapsed")
         
         if code:
-            if code == "090794":
+            # Check secrets first, then fallback to hardcoded (or environment)
+            correct_code = "090794"
+            if hasattr(st, "secrets") and "LOGIN_CODE" in st.secrets:
+                correct_code = st.secrets["LOGIN_CODE"]
+            elif os.getenv("LOGIN_CODE"):
+                correct_code = os.getenv("LOGIN_CODE")
+
+            if code == correct_code:
                 st.session_state.logged_in = True
                 st.rerun()
             else:
@@ -623,6 +635,9 @@ def check_login() -> bool:
 def main() -> None:
     """Application entrypoint."""
     session_state.ensure_session_state(st.session_state)
+    
+    if "profiler" not in st.session_state:
+        st.session_state.profiler = Profiler()
     
     if not check_login():
         return
@@ -660,6 +675,28 @@ def main() -> None:
         else:
             session_state.reset_for_new_scenario(st.session_state)
             st.rerun()
+
+    # Render debug/performance info
+    if "profiler" in st.session_state:
+        with st.expander("🔧 Teknisk Info & Ytelse", expanded=False):
+            profiler: Profiler = st.session_state.profiler
+            entries = profiler.get_entries()
+            if not entries:
+                st.info("Ingen målinger ennå.")
+            else:
+                # Show as a table
+                data = []
+                for e in entries:
+                    duration = f"{e.duration:.2f}s" if e.duration else "Running..."
+                    row = {"Operation": e.name, "Duration": duration, "Start": time.strftime("%H:%M:%S", time.localtime(e.start_time))}
+                    if e.metadata:
+                        row["Metadata"] = str(e.metadata)
+                    data.append(row)
+                st.table(data)
+                
+                if st.button("Nullstill målinger"):
+                    profiler.clear()
+                    st.rerun()
 
 
 if __name__ == "__main__":

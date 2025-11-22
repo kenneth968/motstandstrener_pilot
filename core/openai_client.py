@@ -63,18 +63,29 @@ class AgentRegistry:
         *,
         session: Optional[Session] = None,
         max_turns: int = 6,
+        profiler: Optional[object] = None,  # Avoid circular import
     ) -> str:
         """Execute an agent by running the async Runner via asyncio.run."""
 
         agent = self.get(name)
 
         async def _run() -> str:
-            result = await Runner.run(
-                agent,
-                input=input_text,
-                max_turns=max_turns,
-                session=session,
-            )
+            # If we have a profiler, track the raw agent execution
+            if profiler:
+                with profiler.profile(f"Agent: {name}"):
+                    result = await Runner.run(
+                        agent,
+                        input=input_text,
+                        max_turns=max_turns,
+                        session=session,
+                    )
+            else:
+                result = await Runner.run(
+                    agent,
+                    input=input_text,
+                    max_turns=max_turns,
+                    session=session,
+                )
             return (result.final_output or "").strip()
 
         return asyncio.run(_run())
