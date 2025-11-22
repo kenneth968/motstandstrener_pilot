@@ -7,31 +7,31 @@ import random
 from typing import List
 
 from core.game_state import SparringLevel, SparringRound, SparringOption, SparringTopic
-
-# Simple emoji avatars; replace with asset paths later if desired.
-AVATAR_POOL: List[str] = ["💥", "😠", "😤", "😑", "😏", "🧊", "🧠", "🦊", "🪨", "🔥"]
+from core.openai_client import AgentRegistry
+from logic.game_rules import (
+    calculate_initial_hp, 
+    get_random_avatar, 
+    is_valid_option, 
+    create_fallback_level, 
+    create_fallback_round, 
+    create_fallback_batch
+)
 
 
 class RefereeAgentService:
     """Generates opponents and rounds for the sparring mini-game."""
 
-    def __init__(self, client, model: str):
-        self.client = client
-        self.model = model
+    def __init__(self, registry: AgentRegistry, agent_name: str = "referee"):
+        self.registry = registry
+        self.agent_name = agent_name
 
     def generate_level(self, topic: SparringTopic, difficulty: int, profiler: object = None) -> SparringLevel:
         """Creates a unique level based on topic and difficulty, with guardrails."""
 
-        player_hp = 100
-        opponent_hp = 100
+        player_hp, opponent_hp = calculate_initial_hp(difficulty)
 
-        if difficulty >= 4:
-            opponent_hp = 120  # Harder opponents have more stamina
-        if difficulty >= 7:
-            player_hp = 80  # You start tired/stressed
-
-        system_prompt = f"""
-You are a Game Designer creating a level for a verbal sparring game.
+        prompt = f"""
+TASK: Create a level for a verbal sparring game.
 **Topic**: {topic.title} ({topic.description})
 **Level Difficulty**: {difficulty} (1=Easy, 10=Impossible)
 **Language**: NORWEGIAN (Norsk)
@@ -55,25 +55,16 @@ Return ONLY a JSON object:
 """.strip()
 
         try:
-            if profiler:
-                with profiler.profile("Referee: Generate Level") as p_entry:
-                    try:
-                        response = self.client.chat.completions.create(
-                            model=self.model,
-                            messages=[{"role": "system", "content": system_prompt}],
-                            response_format={"type": "json_object"},
-                        )
-                    except Exception as exc:
-                        p_entry.metadata["error"] = str(exc)
-                        raise exc
-            else:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[{"role": "system", "content": system_prompt}],
-                    response_format={"type": "json_object"},
-                )
+            response_text = self.registry.run(
+                self.agent_name,
+                prompt,
+                profiler=profiler
+            )
 
-            payload = json.loads(response.choices[0].message.content)
+            # Clean up potential markdown code blocks
+            cleaned_text = response_text.replace("```json", "").replace("```", "").strip()
+            payload = json.loads(cleaned_text)
+            
             return SparringLevel(
                 id=f"{topic.id}_lvl_{difficulty}",
                 title=f"Nivå {difficulty}: {payload.get('opponent_role', 'Motstander')}",
@@ -88,32 +79,26 @@ Return ONLY a JSON object:
                 ),
                 initial_player_hp=player_hp,
                 initial_opponent_hp=opponent_hp,
-                avatar_path=random.choice(AVATAR_POOL),
+                avatar_path=get_random_avatar(),
             )
         except Exception as exc:
             print(f"Level generation error: {exc}")
-            # Offline fallback: use topic info to keep immersion
-            fallback_opponent = topic.title or "Motstander"
-            fallback_role = topic.description or "Motstander"
-            return SparringLevel(
-                id="fallback",
-                title=f"Nivå {difficulty}: {fallback_opponent}",
-                opponent_name=fallback_opponent,
-                opponent_role=fallback_role,
-                attack_style="Belærende og pressende",
-                weakness="Rolig fakta og grensesetting",
-                win_condition="Hold deg saklig og avslutt på dine premisser",
-                difficulty_prompt="Vær pågående og overbevist om at du har rett, men uten å bli aggressiv.",
-                initial_player_hp=player_hp,
-                initial_opponent_hp=opponent_hp,
-                avatar_path="🤖",
-            )
+            return create_fallback_level(topic, difficulty)
 
     def generate_round(self, level: SparringLevel, history: list, profiler: object = None) -> SparringRound:
         """Generates a new round with validation and deterministic fallback."""
 
-        system_prompt = f"""
-You are the GAME MASTER for a verbal sparring match.
+        history_lines = []
+        for entry in history[-3:]:
+            if "role" in entry and "content" in entry:
+                history_lines.append(f"{entry['role']}: {entry['content']}")
+            elif "user" in entry and "assistant" in entry:
+                history_lines.append(f"Bruker: {entry['user']}")
+                history_lines.append(f"Motstander: {entry['assistant']}")
+        history_text = "\n".join(history_lines) if history_lines else "Start of conversation."
+
+        prompt = f"""
+TASK: Generate the next turn in the conversation.
 **Level**: {level.title}
 **Opponent**: {level.opponent_name} ({level.opponent_role})
 **Style**: {level.attack_style}
@@ -122,8 +107,10 @@ You are the GAME MASTER for a verbal sparring match.
 **Opponent Instructions**: {level.difficulty_prompt}
 **Language**: NORWEGIAN (Norsk)
 
+**History**:
+{history_text}
+
 **Your Job**:
-Generate the next turn in the conversation.
 1. **Context**: A brief setup (e.g., "Du kommer 5 minutter for sent.").
 2. **Attack**: The opponent's line (Gaslighting/Manipulation).
 3. **4 Options**: Distinct responses for the user.
@@ -146,44 +133,17 @@ Return ONLY a JSON object:
 }}
 """.strip()
 
-        history_lines = []
-        for entry in history[-3:]:
-            if "role" in entry and "content" in entry:
-                history_lines.append(f"{entry['role']}: {entry['content']}")
-            elif "user" in entry and "assistant" in entry:
-                history_lines.append(f"Bruker: {entry['user']}")
-                history_lines.append(f"Motstander: {entry['assistant']}")
-        history_text = "\n".join(history_lines) if history_lines else "Start of conversation."
-
-        user_prompt = f"**History**:\n{history_text}\n\nGenerate the next round."
-
         try:
-            if profiler:
-                with profiler.profile("Referee: Generate Round") as p_entry:
-                    try:
-                        response = self.client.chat.completions.create(
-                            model=self.model,
-                            messages=[
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": user_prompt},
-                            ],
-                            response_format={"type": "json_object"},
-                        )
-                    except Exception as exc:
-                        p_entry.metadata["error"] = str(exc)
-                        raise exc
-            else:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                )
-
-            data = json.loads(response.choices[0].message.content)
-            options = [SparringOption(**opt) for opt in data.get("options", []) if self._is_valid_option(opt)]
+            response_text = self.registry.run(
+                self.agent_name,
+                prompt,
+                profiler=profiler
+            )
+            
+            cleaned_text = response_text.replace("```json", "").replace("```", "").strip()
+            data = json.loads(cleaned_text)
+            
+            options = [SparringOption(**opt) for opt in data.get("options", []) if is_valid_option(opt)]
             if len(options) != 4:
                 raise ValueError("Expected 4 valid options")
 
@@ -195,14 +155,13 @@ Return ONLY a JSON object:
             )
         except Exception as exc:
             print(f"Referee error: {exc}")
-            return self._fallback_round(level)
+            return create_fallback_round(level)
 
     def generate_round_batch(self, level: SparringLevel, count: int = 5, profiler: object = None) -> List[SparringRound]:
         """Generate a batch of nano-scenarios to avoid per-turn latency."""
 
-        system_prompt = f"""
-You are the GAME MASTER for a verbal sparring match.
-Generate {count} DIFFERENT nano-scenarios under the same topic.
+        prompt = f"""
+TASK: Generate {count} DIFFERENT nano-scenarios under the same topic.
 Each round must have a distinct setting that still fits the topic (e.g. familieselskap, jobb-lunsj, treningssenter, chat/gruppe, taxi).
 Each context should be 2-3 short sentences that set the scene before the attack.
 Keep them concise and self-contained: one vivid setup + one attack + 4 responses.
@@ -234,31 +193,22 @@ Ensure the output is valid JSON.
 """.strip()
 
         try:
-            if profiler:
-                with profiler.profile("Referee: Generate Batch") as p_entry:
-                    try:
-                        response = self.client.chat.completions.create(
-                            model=self.model,
-                            messages=[{"role": "system", "content": system_prompt}],
-                            response_format={"type": "json_object"},
-                        )
-                    except Exception as exc:
-                        p_entry.metadata["error"] = str(exc)
-                        raise exc
-            else:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[{"role": "system", "content": system_prompt}],
-                    response_format={"type": "json_object"},
-                )
-            data = json.loads(response.choices[0].message.content)
+            response_text = self.registry.run(
+                self.agent_name,
+                prompt,
+                profiler=profiler
+            )
+            
+            cleaned_text = response_text.replace("```json", "").replace("```", "").strip()
+            data = json.loads(cleaned_text)
+            
             rounds_raw = data.get("rounds", [])
             parsed: List[SparringRound] = []
             for item in rounds_raw:
                 options = [
                     SparringOption(**opt)
                     for opt in item.get("options", [])
-                    if self._is_valid_option(opt)
+                    if is_valid_option(opt)
                 ]
                 if len(options) != 4:
                     continue
@@ -279,75 +229,4 @@ Ensure the output is valid JSON.
             print(f"Referee batch error: {exc}")
 
         # Fallback: generate different offline contexts under same topic
-        return self._fallback_batch(level, count)
-
-    @staticmethod
-    def _is_valid_option(option: dict) -> bool:
-        required = {"text", "damage_user", "damage_opponent", "feedback", "type"}
-        return isinstance(option, dict) and required <= set(option.keys())
-
-    @staticmethod
-    def _fallback_round(level: SparringLevel) -> SparringRound:
-        """Deterministic offline fallback to keep the UI responsive."""
-
-        options = [
-            SparringOption(
-                text="Ok, kanskje du har rett, jeg dropper det.",
-                damage_user=25,
-                damage_opponent=0,
-                feedback="Du ga opp for lett.",
-                type="critical_fail",
-            ),
-            SparringOption(
-                text="La oss ta dette senere.",
-                damage_user=12,
-                damage_opponent=0,
-                feedback="Uklart og forsinkende.",
-                type="weak",
-            ),
-            SparringOption(
-                text="Jeg hører deg, men faktum er at vi avtalte dette.",
-                damage_user=0,
-                damage_opponent=12,
-                feedback="Tydelig grensesetting.",
-                type="good",
-            ),
-            SparringOption(
-                text="Jeg forholder meg til avtalen: vi gjør det slik, punktum.",
-                damage_user=0,
-                damage_opponent=24,
-                feedback="Presist og stødig.",
-                type="critical_hit",
-            ),
-        ]
-
-        random.shuffle(options)
-        return SparringRound(
-            context=(
-                "Systemgenerert runde: en pågående samtalepartner utfordrer deg. "
-                "Du er i en hverdagssituasjon og merker at motparten presser agendaen sin."
-            ),
-            attack=f"{level.opponent_name}: 'Dette henger ikke på greip, hvorfor presser du dette?'",
-            options=options,
-        )
-
-    @classmethod
-    def _fallback_batch(cls, level: SparringLevel, count: int) -> List[SparringRound]:
-        contexts = [
-            "Familiebesøk: onkel tar ordet ved middagsbordet, alle lytter mens han gjør et poeng ut av politikken.",
-            "Kantina på jobb: kollega kommenterer høyt mens flere rundt dere følger med.",
-            "Treningssenteret: en bekjent starter småprat og vil fortelle deg hvordan ting bør gjøres.",
-            "Chatgruppe: noen kaster inn en spiss kommentar og forventer svar fra deg.",
-            "Taxi-kø: en fremmed vil diskutere temaet og presser på mens dere venter.",
-        ]
-        rounds: List[SparringRound] = []
-        for i in range(count):
-            base = cls._fallback_round(level)
-            rounds.append(
-                SparringRound(
-                    context=contexts[i % len(contexts)],
-                    attack=base.attack,
-                    options=base.options,
-                )
-            )
-        return rounds
+        return create_fallback_batch(level, count)

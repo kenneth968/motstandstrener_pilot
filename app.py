@@ -75,19 +75,19 @@ def bootstrap_services(version: str = "2024-11-22-profiling-v1") -> Dict[str, ob
         AgentConfig(
             name="referee",
             model=settings.openai.referee_agent_model,
-            instructions="Du er en streng men rettferdig dommer i en verbal boksekamp.",
+            instructions=(
+                "Du er en streng men rettferdig dommer i en verbal boksekamp. "
+                "Du svarer ALLTID med gyldig JSON."
+            ),
         )
     )
-
-    from openai import OpenAI
-    client = OpenAI() # Initialize standard OpenAI client
 
     services = {
         "scenario": ScenarioAgentService(registry, "scenario"),
         "feedback": FeedbackAgentService(registry, "feedback"),
         "reflection": ReflectionAgentService(registry, "reflection"),
         "scenario_planner": ScenarioPlannerService(registry, "scenario_planner"),
-        "referee": RefereeAgentService(client, settings.openai.referee_agent_model), # Pass client directly
+        "referee": RefereeAgentService(registry, "referee"),
     }
     return services
 
@@ -619,9 +619,13 @@ def check_login() -> bool:
         if code:
             # Check secrets first, then fallback to hardcoded (or environment)
             correct_code = "090794"
-            if hasattr(st, "secrets") and "LOGIN_CODE" in st.secrets:
-                correct_code = st.secrets["LOGIN_CODE"]
-            elif os.getenv("LOGIN_CODE"):
+            try:
+                if hasattr(st, "secrets") and "LOGIN_CODE" in st.secrets:
+                    correct_code = st.secrets["LOGIN_CODE"]
+            except Exception:
+                pass  # Secrets file not found or other error
+
+            if os.getenv("LOGIN_CODE"):
                 correct_code = os.getenv("LOGIN_CODE")
 
             if code == correct_code:
