@@ -1,0 +1,9 @@
+Loading settings...
+Using Referee Model: gpt-4o-mini
+
+--- Testing Generate Level ---
+Level generated in 6.30s
+
+--- Testing Generate Round Batch ---
+Batch generated in 27.71s
+WARNING: Batch generation took longer than 20s!

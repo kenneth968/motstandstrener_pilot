@@ -18,11 +18,10 @@ class OpenAISettings:
     """Holds configuration for the OpenAI Agent SDK."""
 
     api_key: str
-    scenario_agent_model: str = "gpt-5-nano"
-    feedback_agent_model: str = "gpt-5-nano"
-    reflection_agent_model: str = "gpt-5-nano"
-    referee_agent_model: str = "gpt-5-nano"
-
+    scenario_agent_model: str = "gpt-4o-mini"
+    feedback_agent_model: str = "gpt-4o-mini"
+    reflection_agent_model: str = "gpt-4o-mini"
+    referee_agent_model: str = "gpt-4o-mini"
 
 @dataclass
 class AppSettings:
@@ -47,9 +46,9 @@ def load_settings() -> AppSettings:
 
     openai_settings = OpenAISettings(
         api_key=api_key,
-        scenario_agent_model=os.getenv("SCENARIO_AGENT_MODEL", "gpt-5-nano"),
-        feedback_agent_model=os.getenv("FEEDBACK_AGENT_MODEL", "gpt-5-nano"),
-        reflection_agent_model=os.getenv("REFLECTION_AGENT_MODEL", "gpt-5-nano"),
-        referee_agent_model=os.getenv("REFEREE_AGENT_MODEL", "gpt-5-nano"),
+        scenario_agent_model=os.getenv("SCENARIO_AGENT_MODEL", "gpt-4o-mini"),
+        feedback_agent_model=os.getenv("FEEDBACK_AGENT_MODEL", "gpt-4o-mini"),
+        reflection_agent_model=os.getenv("REFLECTION_AGENT_MODEL", "gpt-4o-mini"),
+        referee_agent_model=os.getenv("REFEREE_AGENT_MODEL", "gpt-4o-mini"),
     )
     return AppSettings(openai=openai_settings)
