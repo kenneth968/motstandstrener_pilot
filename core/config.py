@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
+import streamlit as st
 from dotenv import load_dotenv
 
 
@@ -31,12 +32,17 @@ class AppSettings:
 
 
 def load_settings() -> AppSettings:
-    """Load settings from environment variables and return an AppSettings instance."""
+    """Load settings from environment variables or Streamlit secrets."""
 
     api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
+    
+    # Fallback to Streamlit secrets if not in env (for Cloud deployment)
+    if not api_key and hasattr(st, "secrets") and "OPENAI_API_KEY" in st.secrets:
+        api_key = st.secrets["OPENAI_API_KEY"]
+
     if not api_key:
         raise RuntimeError(
-            "OPENAI_API_KEY is not set. Please add it to your .env file."
+            "OPENAI_API_KEY is not set. Please add it to your .env file or Streamlit secrets."
         )
 
     openai_settings = OpenAISettings(
