@@ -37,7 +37,7 @@ st.set_page_config(page_title="Motstandstrener", layout="wide")
 
 
 @st.cache_resource
-def bootstrap_services(version: str = "2024-11-20-sparring-v1") -> Dict[str, object]:
+def bootstrap_services(version: str = "2024-11-22-profiling-v1") -> Dict[str, object]:
     """Initialize configuration, agent registry, and service layer instances."""
 
     settings: AppSettings = load_settings()
